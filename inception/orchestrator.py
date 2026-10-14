@@ -40,6 +40,9 @@ def make_renderers(width: int, height: int, fps: int) -> tuple[ARWalkRenderer, C
     if settings.ar_renderer == "mock":
         from .renderers.mock import MockARWalk
         ar: ARWalkRenderer = MockARWalk(width, height, fps)
+    elif settings.ar_renderer == "alaya":
+        from .renderers.alaya_remote import AlayaRemoteWalk
+        ar = AlayaRemoteWalk(width, height, fps)
     else:
         from .renderers.matrixgame2 import MatrixGame2Walk
         ar = MatrixGame2Walk(width, height, fps)
@@ -118,6 +121,8 @@ class Game:
         )
         self.memory.record_turn("(start)", "scene established", opening)
         self.session.log("writer", "opening", text=opening)
+        if hasattr(self.ar, "prompt"):   # text-conditioned walk renderers get the scene description
+            self.ar.prompt = f"First-person view. {description} Walking forward at a natural pace, no cuts. {setup.style}"
         self.display.start(frame)   # also requests the first idle loop
         self.started = True
         self.display.event({"type": "narration", "text": opening, "tag": "opening"})

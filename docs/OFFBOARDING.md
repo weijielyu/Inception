@@ -4,9 +4,13 @@
 
 ## 一句话现状
 
-Demo 能端到端跑通（上传图 → WASD 行走 → 打字做事 → 画面出事件），但行走画面质量不够，demo 目前是**关着的**。行走模型的替代方案里 AlayaWorld 最有希望，只跑通了官方示例，还没接进 demo。最新的方向性想法（代码生成布局 + 视频模型只做重绘）还没开始做。
+（10-14 更新）Demo 跑在 **vllab14** 上，行走渲染器已换成 AlayaWorld：`ssh -N -L 7861:127.0.0.1:7861 wjlyu@169.236.184.113` 后打开 http://localhost:7861 。占 3 张卡：GPU 0、1 是 AlayaWorld 行走服务（端口 18770），GPU 2 是 Wan 片段。行走不是实时的：每 1.33 秒画面要生成 6–10 秒，靠站着不动时预生成前进画面来缓解。
 
-带视频的结果页：https://claude.ai/artifact/DHzor4KxU81BVjw2V8sfqv （私有，只有 wjlyu 能打开；源文件在 `results_page/`）
+重启方法（在 vllab14 上）：`scripts/run_alaya_server.sh 0,1 18770`（约 40 秒加载），然后 `scripts/restart_demo.sh 2 7861`。
+
+最新的方向性想法（代码生成布局 + 视频模型只做重绘）还没开始做。
+
+带视频的结果页：https://claude.ai/artifact/DHzor4KxU81BVjw2V8sfqv （私有，只有 wjlyu 能打开；源文件在 `results_page/`，不含 10-14 的 AlayaWorld 结果）
 
 ## 项目是什么
 
@@ -67,13 +71,12 @@ v2 规则已写进 GM 的系统 prompt，832×480 已通过 `.env` 的 `CLIP_REN
 ## 没做的事
 
 - **AlayaWorld 的长时间稳定性**：自有照片、键盘动作转相机轨迹（`scripts/make_alaya_case.py`）、慢块原因三项已在 10-14 验证，见 `docs/eval_results.md` 末尾。还没跑的是 32 秒以上的 rollout（`forest_long` 用例已建好，排在 vllab10 上等卡）。
-- **AlayaWorld 接进 demo**：需要包成常驻的 `start(frame)` / `step(keys)` 服务。它的 `reactor/alayaworld.py` 是现成的参考实现。
+- **AlayaWorld 行走的体验问题**：已接入（`inception/alaya_server.py` 常驻服务，`renderers/alaya_remote.py` 客户端，`agents/display.py` 里的前进预生成）。未解决：比实时慢约 5 倍；预生成只覆盖"直走"，一转向就要从当前帧重新起流（约 5 秒）；行走中没有把文字事件传给 AlayaWorld（`event_prompt` 字段留了但没接）。
 - **WorldPlay2 常驻服务**：同上，参考 `third_party/WorldPlay2/reactor/`。需要 4 张卡。
 - **代码生成布局 + 视频模型重绘**（用户 10-13 提出）：coding agent 写 three.js 场景承载几何和状态，引擎负责实时交互，视频模型只把粗渲染重绘成照片级。只讨论过，没有任何代码。建议的最小实验见下。
 - **计划里后置的模块**：Cache（预生成前/左/右或常见动作）、Audio（旁白和音效）、Memory 的反思摘要。
 - **QC 自动重采样**：现在视觉模型审计只写日志，不触发重新生成。
 - **后果回写画面**：挖出的坑只存在于状态里，下次经过画面上没有。
-- **demo 迁移**：从 vllab13 搬到允许的机器。
 
 ## 之后的计划（建议顺序）
 
@@ -155,7 +158,7 @@ HF token 的副本在 `vllab13:/ssd4/wjlyu/hf_cache/token`、`vllab14:/ssd3/wjly
 
 ### 当前运行状态
 
-三台机器上都没有这个项目的进程在跑。7861（demo）和 7862（mock 开发服务）都已停止。
+vllab14 上跑着 AlayaWorld 行走服务（18770）和 demo（7861）。vllab10 上有一个等卡的排队脚本（AlayaWorld 32 秒长 rollout）。vllab13 上没有进程。
 
 ## 怎么把东西跑起来
 

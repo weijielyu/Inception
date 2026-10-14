@@ -13,6 +13,7 @@ ap.add_argument("base"); ap.add_argument("image")
 ap.add_argument("--walk", type=float, default=20, help="seconds to hold W")
 ap.add_argument("--wait", type=float, default=90, help="seconds to wait for the action clip")
 ap.add_argument("--action", default="我要开始挖地")
+ap.add_argument("--pre-wait", type=float, default=2, help="idle seconds before walking")
 a = ap.parse_args()
 ws_url = a.base.replace("http", "ws") + "/stream"
 
@@ -37,7 +38,7 @@ async def main():
                     elif m["type"] in ("narration", "status"):
                         events.append((round(time.time() - t0, 1), m["type"], m["text"][:100]))
         task = asyncio.create_task(reader())
-        await asyncio.sleep(2)
+        await asyncio.sleep(a.pre_wait)
         print(el(), f"hold W for {a.walk}s"); await ws.send(json.dumps({"keys": {"w": True}}))
         f0 = frames; await asyncio.sleep(a.walk); print(el(), f"  {frames-f0} frames while walking")
         await ws.send(json.dumps({"keys": {"w": False}}))

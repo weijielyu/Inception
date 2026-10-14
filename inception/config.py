@@ -50,7 +50,10 @@ class Settings:
     video_steps: int = int(os.environ.get("VIDEO_STEPS", "25"))
 
     # ---- renderers (hybrid display) ----
-    ar_renderer: str = os.environ.get("AR_RENDERER", "mock")          # mock | matrixgame2
+    ar_renderer: str = os.environ.get("AR_RENDERER", "mock")          # mock | matrixgame2 | alaya
+    ar_prefetch_chunks: int = int(os.environ.get("AR_PREFETCH_CHUNKS", "0"))   # forward chunks banked while idle
+    ar_buffer_seconds: float = float(os.environ.get("AR_BUFFER_SECONDS", "2"))
+    alaya_url: str = os.environ.get("ALAYA_URL", "http://127.0.0.1:18770")
     clip_renderer: str = os.environ.get("CLIP_RENDERER", "mock")      # mock | wan
     display_fps: int = int(os.environ.get("DISPLAY_FPS", "16"))
     clip_seconds: float = float(os.environ.get("CLIP_SECONDS", "4"))

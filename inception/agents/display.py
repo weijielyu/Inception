@@ -75,6 +75,10 @@ class DisplayAgent:
         self.ar_frames_recent: deque[np.ndarray] = deque(maxlen=fps * 2)
         self.prepared_version = -1            # AR renderer has been start()ed on this version's frame
         self._prepare_done: dict[int, threading.Event] = {}
+        self.ar_lock = threading.Lock()       # serializes every call into the AR renderer
+        self.prefetch: list[np.ndarray] = []  # forward frames generated ahead of the player (slow renderers)
+        self.prefetch_version = -1
+        self.prefetch_steps = 0
         self._rec = None
         if settings.record_stream:
             import imageio.v2 as iio2
@@ -103,16 +107,36 @@ class DisplayAgent:
 
         def run():
             try:
-                self.ar.start(frame)
+                with self.ar_lock:
+                    self.ar.start(frame)
                 with self.lock:
                     if self.version == version:
                         self.prepared_version = version
+                        self.prefetch, self.prefetch_version, self.prefetch_steps = [], version, 0
                 self.session.log(self.name, "ar_prepared", version=version)
             except Exception as e:
                 self.session.log(self.name, "ar_prepare_error", error=str(e)[:200])
             finally:
                 done.set()
                 self._prepare_done.pop(version, None)
+            # Speculative walk: bank a few forward chunks while the player stands still, so pressing W
+            # plays immediately even when the renderer is slower than real time.
+            try:
+                for _ in range(settings.ar_prefetch_chunks):
+                    if self._stop or self.ar_active or self.version != version:
+                        break
+                    with self.ar_lock:
+                        if self.ar_active or self.version != version:
+                            break
+                        frames = self.ar.step(Keys(w=True))
+                        with self.lock:
+                            if self.version == version:
+                                self.prefetch.extend(frames)
+                                self.prefetch_steps += 1
+                if settings.ar_prefetch_chunks:
+                    self.session.log(self.name, "ar_prefetched", version=version, frames=len(self.prefetch))
+            except Exception as e:
+                self.session.log(self.name, "ar_prefetch_error", error=str(e)[:200])
 
         threading.Thread(target=run, daemon=True, name="ar-prepare").start()
 
@@ -279,22 +303,35 @@ class DisplayAgent:
                 pending = self._prepare_done.get(version)
             if pending is not None:                 # a pre-start for this frame is in flight: wait for it
                 pending.wait(timeout=15)
-            with self.lock:
-                prepared = self.prepared_version == version
-            if not prepared:
-                self.ar.start(seed_frame)
+            with self.ar_lock:                      # also waits for an in-flight prefetch step
+                with self.lock:
+                    prepared = self.prepared_version == version
+                    k = self.keys
+                    forward_only = k.w and not (k.a or k.s or k.d or abs(k.dx) > 1 or abs(k.dy) > 1)
+                    banked = self.prefetch if self.prefetch_version == version else []
+                    advanced = self.prefetch_steps if self.prefetch_version == version else 0
+                    self.prefetch, self.prefetch_steps = [], 0
+                if prepared and advanced and forward_only:
+                    self.ar_buffer.extend(banked)       # play what was generated ahead; the model is already there
+                elif not prepared or advanced:
+                    self.ar.start(seed_frame)           # model is not at the displayed frame: restart from it
+                    banked = []
             self.qc.reset()
-            self.session.log(self.name, "ar_started", seconds=round(time.time() - t0, 2), prepared=prepared)
+            self.session.log(self.name, "ar_started", seconds=round(time.time() - t0, 2), prepared=prepared, banked=len(banked))
             while self.ar_active and not self._stop:
-                if len(self.ar_buffer) > self.fps * 2:   # don't run ahead of playback
+                if len(self.ar_buffer) > self.fps * settings.ar_buffer_seconds:   # don't run too far ahead of playback
                     time.sleep(0.02)
                     continue
-                frames = self.ar.step(self.keys)
+                with self.ar_lock:
+                    if not self.ar_active:
+                        break
+                    frames = self.ar.step(self.keys)
                 good = [f for f in frames if self.qc.check(f)[0]]
                 ok, reason = self.qc.drift(good)
                 if not ok or len(good) < len(frames) // 2:
                     self.session.log(self.name, "ar_reseed", reason=reason, dropped=len(frames) - len(good))
-                    self.ar.start(self.last_shown if self.last_shown is not None else seed_frame)
+                    with self.ar_lock:
+                        self.ar.start(self.last_shown if self.last_shown is not None else seed_frame)
                     self.qc.reset()
                     continue
                 self.ar_buffer.extend(good)
