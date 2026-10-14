@@ -1,14 +1,14 @@
 # Inception 交接文档
 
-写于 2026-10-13。覆盖 10-09 至 10-13 的全部工作。
+写于 2026-10-13，更新于 2026-10-14。覆盖 10-09 至 10-14 的全部工作。
 
 ## 一句话现状
 
-（10-14 更新）Demo 跑在 **vllab14** 上，行走渲染器已换成 AlayaWorld：`ssh -N -L 7861:127.0.0.1:7861 wjlyu@169.236.184.113` 后打开 http://localhost:7861 。占 3 张卡：GPU 0、1 是 AlayaWorld 行走服务（端口 18770），GPU 2 是 Wan 片段。行走不是实时的：每 1.33 秒画面要生成 6–10 秒，靠站着不动时预生成前进画面来缓解。
+**结论（10-14，用户已认可）：用视频模型逐帧生成行走这条路，在现有开源模型和 48 GB 卡上走到头了。** 实时的 Matrix-Game 2.0 画面会崩；不崩的 AlayaWorld、WorldPlay 系列比实时慢 4–10 倍。下一步转向"代码生成布局 + 视频模型只做重绘"，行走交给引擎实时渲染。这个新方向还没有任何代码。
 
-重启方法（在 vllab14 上）：`scripts/run_alaya_server.sh 0,1 18770`（约 40 秒加载），然后 `scripts/restart_demo.sh 2 7861`。
+Demo 跑在 **vllab14** 上，行走渲染器是 AlayaWorld：`ssh -N -L 7861:127.0.0.1:7861 wjlyu@169.236.184.113` 后打开 http://localhost:7861 。它能走、画面不崩，但走走停停：实测按住 W 40 秒，约 11 秒在动。占 3 张卡：GPU 0、1 是 AlayaWorld 行走服务（端口 18770），GPU 2 是 Wan 片段。
 
-最新的方向性想法（代码生成布局 + 视频模型只做重绘）还没开始做。
+重启方法（在 vllab14 上）：`scripts/run_alaya_server.sh 0,1 18770`（约 40 秒加载），然后 `scripts/restart_demo.sh 2 7861`。新方向不需要这套服务时可以直接停掉，把卡还回去。
 
 带视频的结果页：https://claude.ai/artifact/DHzor4KxU81BVjw2V8sfqv （私有，只有 wjlyu 能打开；源文件在 `results_page/`，不含 10-14 的 AlayaWorld 结果）
 
@@ -21,10 +21,10 @@
 - **GM agent**（`agents/gm.py`）：一次 DeepSeek 调用完成输入分类（action / declare / question）、裁决、成功和失败两套后果、叙述、镜头 prompt。代码事后掷骰选一支。
 - **Memory**（`agents/memory.py`, `state.py`）：唯一写状态者。`state.json` 是真相源，`events.jsonl` 是事件日志，主线事件按墙上时间触发。
 - **Writer**（`agents/writer.py`）：只在开局用，生成前提、风格行、隐藏真相和主线事件表。
-- **Display**（`agents/display.py`）：播放缓冲。三种画面来源，优先级 动作片段 > AR 行走 > 空闲。空闲时停在最后一帧，后台生成环境片段后替换。动作片段播放时锁键。
+- **Display**（`agents/display.py`）：播放缓冲。三种画面来源，优先级 动作片段 > AR 行走 > 空闲。空闲时停在最后一帧，后台生成环境片段后替换。玩家动作从输入到片段播完期间锁键；主线事件不锁键，也不在行走中触发。行走模型由一个常驻线程独占，状态始终接着上一帧，只有播完片段或丢弃预生成画面时才重新起步；站着不动时会预生成几段直走画面。
 - **QC**（`agents/qc.py`）：像素统计门控，加异步的视觉模型审计（只写日志）。
 - **Perception**（`orchestrator.py: _caption_view`）：当前帧变化时让视觉模型描述一句，喂给 GM，让镜头 prompt 锚定屏幕上的真实画面。
-- **渲染器**（`renderers/`）：`matrixgame2.py` 行走，`wan_clip.py` 片段，`mock.py` 无 GPU 替身。
+- **渲染器**（`renderers/`）：行走有 `alaya_remote.py`（现用，连 `inception/alaya_server.py` 常驻服务）和 `matrixgame2.py`；片段是 `wan_clip.py`；`mock.py` 是无 GPU 替身。由 `.env` 或环境变量 `AR_RENDERER`、`CLIP_RENDERER` 选择。
 - **Web**（`web/server.py`, `web/index.html`）：FastAPI + WebSocket，界面全英文。
 
 `agents/` 下的 `interact.py`、`prediction.py`、`prompt.py`、`film.py`、`cache.py` 以及 `app.py`、`film_server.py` 是第一版拆分式实现的遗留，不在关键路径上。`prediction.py` 里的 `StateDelta` 仍被 GM 和 Memory 引用，不能删。
@@ -70,20 +70,32 @@ v2 规则已写进 GM 的系统 prompt，832×480 已通过 `.env` 的 `CLIP_REN
 
 ## 没做的事
 
-- **AlayaWorld 的长时间稳定性**：自有照片、键盘动作转相机轨迹（`scripts/make_alaya_case.py`）、慢块原因三项已在 10-14 验证，见 `docs/eval_results.md` 末尾。还没跑的是 32 秒以上的 rollout（`forest_long` 用例已建好，排在 vllab10 上等卡）。
-- **AlayaWorld 行走的体验问题**：已接入（`inception/alaya_server.py` 常驻服务，`renderers/alaya_remote.py` 客户端，`agents/display.py` 里的前进预生成）。未解决：比实时慢约 5 倍；预生成只覆盖"直走"，一转向就要从当前帧重新起流（约 5 秒）；行走中没有把文字事件传给 AlayaWorld（`event_prompt` 字段留了但没接）。
-- **WorldPlay2 常驻服务**：同上，参考 `third_party/WorldPlay2/reactor/`。需要 4 张卡。
-- **代码生成布局 + 视频模型重绘**（用户 10-13 提出）：coding agent 写 three.js 场景承载几何和状态，引擎负责实时交互，视频模型只把粗渲染重绘成照片级。只讨论过，没有任何代码。建议的最小实验见下。
-- **计划里后置的模块**：Cache（预生成前/左/右或常见动作）、Audio（旁白和音效）、Memory 的反思摘要。
-- **QC 自动重采样**：现在视觉模型审计只写日志，不触发重新生成。
-- **后果回写画面**：挖出的坑只存在于状态里，下次经过画面上没有。
+**新方向（下一步的主线）**
 
-## 之后的计划（建议顺序）
+- **代码生成布局 + 视频模型重绘**：coding agent 写 three.js 场景承载几何、碰撞和物体状态；引擎负责实时行走；视频模型只把粗渲染重绘成照片级。玩家说"路上有头大象"就是往场景里加一个物体，挖的坑是几何上真的少一块。只讨论过，没有代码。已知风险：重绘的帧间闪烁；同一面墙两次看到纹理不同；agent 生成的布局和用户照片对不上；会动的角色需要资产。
 
-2. 决定方向：继续换行走模型，还是转向"代码布局 + 重绘"。用户倾向后者，尚未拍板。
-3. 如果走"代码布局 + 重绘"，最小实验约 1–2 天：森林照片 → DA3 深度 → 粗网格和 three.js 场景 → 无头渲染一条 10 秒路径的 RGB 和深度 → Wan2.2-Fun 深度控制离线重绘 → 看闪烁和一致性。过关后再测实时重绘的帧率。
-4. 如果继续换行走模型：先补 AlayaWorld 的三项验证，再做常驻服务，接进 Display 作为第三种来源。
-5. 把 demo 部署到允许的机器上。
+**旧方向里停在半路的**（转向后大多不必再做，列出来备查）
+
+- AlayaWorld 行走比实时慢约 6 倍，没有解决办法。预生成只覆盖直走，转向要从当前帧重新起步（约 5 秒）。
+- 行走中没有把文字事件传给 AlayaWorld。它自己能响应"实体出现"类 prompt（见实验结果），`renderers/alaya_remote.py` 里留了 `event_prompt` 字段但没接。
+- AlayaWorld 32 秒以上的 rollout 没跑成。用例 `forest_long` 已建好，10-14 在 vllab10 上试了 3 次都因为抢卡报 cuDNN 初始化失败。
+- WorldPlay2 没做常驻服务（需要 4 张卡，加载 10 分钟）。
+
+**和方向无关、仍然有用的**
+
+- Cache（预生成常见动作）、Audio（旁白和音效）、Memory 的反思摘要。
+- QC 自动重采样：现在视觉模型审计只写日志，不触发重新生成。
+- 后果回写画面：挖出的坑只存在于状态里，下次经过画面上没有。新方向下这一条由几何直接解决。
+
+## 之后的计划
+
+1. 最小实验，约 1–2 天，需要 1–2 张卡：
+   - 森林照片 → DA3 深度（环境 `.venv_alaya` 里已装好）→ 粗网格，写一个能 WASD 走的 three.js 场景，加一个大象代理体。
+   - 无头渲染一条 10 秒路径的 RGB 和深度。
+   - 用 Wan2.2-Fun 深度控制离线重绘，照片作参考，看闪烁和一致性。
+   - 和 AlayaWorld 同路径的结果并排比（`logs/sheet_alaya_forest_352.jpg`）。
+2. 离线重绘过关后，测实时重绘在 48 GB 卡上的帧率（候选：StreamDiffusionV2、Krea Realtime；Decart Lucy 是付费 API）。
+3. 可行的话，把现有的 GM / Memory / Display 接到新渲染路径上：GM 的状态差分改为同时驱动场景代码；Display 的"行走"来源换成引擎画面。GM、Memory、QC、评测脚本和 Web 前端都可以原样复用。
 
 ## 机器和约束
 
@@ -106,6 +118,8 @@ v2 规则已写进 GM 的系统 prompt，832×480 已通过 `.env` 的 `CLIP_REN
 | `scripts/smoke_ws.py` | 对运行中的服务做端到端冒烟测试 |
 | `scripts/spike_mg2.py`, `spike_wan_clip.py`, `spike_bidir_walk.py` | MG2、Wan 片段、Wan 接龙的测速脚本 |
 | `scripts/spike_worldplay.sh`, `spike_worldplay2.sh`, `spike_alaya.sh` | 三个候选行走模型的运行脚本 |
+| `scripts/run_alaya_server.sh`, `run_demo.sh`, `restart_demo.sh` | 启动 AlayaWorld 行走服务和 demo |
+| `scripts/make_alaya_case.py`, `test_alaya_server.py` | 键盘动作串转 AlayaWorld 用例；行走服务的客户端测试 |
 | `scripts/wait_gpus_and_run.sh`, `_rank_wrapper.sh`, `_queue_*.sh` | 等卡、多卡包装、排队 |
 | `docs/eval_results.md`, `spike_results.md` | 实验数字和结论 |
 | `reports/生成式开放世界游戏技术调研.md` | 最初的调研报告 |
@@ -148,17 +162,103 @@ AlayaWorld 在 48 GB 卡上要加 `--compile none`，否则第 5 块编译失败
 | vllab14 | `/ssd3/wjlyu/hf_cache` | HY-WorldPlay 全套，含非蒸馏 AR 权重 | 153 GB |
 | vllab14 | `/ssd3/wjlyu/worldplay2` | 同上 | 183 GB |
 | vllab14 | `/ssd3/wjlyu/alayaworld` | 同上 | 70 GB |
-| vllab14 | `/ssd3/wjlyu/inception_spike` | 在 vllab14 上跑出的视频 | 33 MB |
+| vllab14 | `/ssd3/wjlyu/inception_models/Wan-AI` | Wan2.2 TI2V-5B（demo 用） | 32 GB |
+| vllab14 | `/ssd3/wjlyu/inception_sessions` | vllab14 上 demo 的各局状态和录像 | 小 |
+| vllab14 | `/ssd3/wjlyu/inception_spike` | 在 vllab14 上跑出的实验视频 | 小 |
+| vllab10 | `/ssd1/wjlyu/alayaworld` | AlayaWorld 全套 | 70 GB |
 | vllab12 | `/ssd1/wjlyu/hf_cache` | HY-WorldPlay 全套 | 122 GB |
 | vllab12 | `/ssd1/wjlyu/worldplay2` | 同上 | 183 GB |
 
-vllab13 上的权重现在没用处了（不能在那里跑 GPU），可以删掉腾约 500 GB。demo 要迁移的话需要先把 `inception_models` 拷到目标机器。
+vllab13 上的权重现在没用处了（不能在那里跑 GPU），可以删掉腾约 500 GB。转向新方向后，各机器上的 HY-WorldPlay 和 WorldPlay2 权重（合计约 800 GB）也可以删。
 
 HF token 的副本在 `vllab13:/ssd4/wjlyu/hf_cache/token`、`vllab14:/ssd3/wjlyu/hf_cache/token`、`vllab12:/ssd1/wjlyu/hf_cache/token`。这个账号已获得 FLUX.1-Redux-dev 和 Gemma-3 的访问权限。
 
 ### 当前运行状态
 
-vllab14 上跑着 AlayaWorld 行走服务（18770）和 demo（7861）。vllab10 上有一个等卡的排队脚本（AlayaWorld 32 秒长 rollout）。vllab13 上没有进程。
+vllab14 上跑着 AlayaWorld 行走服务（18770，GPU 0、1）和 demo（7861，GPU 2）。vllab10、vllab12、vllab13 上没有这个项目的进程。
+
+## 怎么把东西跑起来
+
+Mock 模式，不占 GPU，可在 vllab13 上跑：
+
+```bash
+cd ~/Inception
+AR_RENDERER=mock CLIP_RENDERER=mock .venv/bin/python -m inception.web.server --port 7862
+```
+
+真实渲染器（AlayaWorld 行走 + Wan 片段），需要 3 张空卡，目前部署在 vllab14：
+
+```bash
+cd ~/Inception
+scripts/run_alaya_server.sh 0,1 18770 > logs/alaya_server.log 2>&1 &   # 等日志出现 "model ready"
+scripts/restart_demo.sh 2 7861
+# 本地转发：ssh -N -L 7861:127.0.0.1:7861 wjlyu@169.236.184.113
+```
+
+换机器需要那台机器的 SSD 上有 `/ssd3/wjlyu/alayaworld` 和 `/ssd3/wjlyu/inception_models/Wan-AI`（路径不同就改 `third_party/AlayaWorld/configs/` 下的配置，vllab10 用的 `/ssd1` 版本是 `infer_pt_ssd1.yaml`）。改回 Matrix-Game 2.0 行走：`AR_RENDERER=matrixgame2`，只需 2 张卡。
+
+离线评测：GM 输出；Wan 渲染加判官打分 |
+| `scripts/smoke_ws.py` | 对运行中的服务做端到端冒烟测试 |
+| `scripts/spike_mg2.py`, `spike_wan_clip.py`, `spike_bidir_walk.py` | MG2、Wan 片段、Wan 接龙的测速脚本 |
+| `scripts/spike_worldplay.sh`, `spike_worldplay2.sh`, `spike_alaya.sh` | 三个候选行走模型的运行脚本 |
+| `scripts/run_alaya_server.sh`, `run_demo.sh`, `restart_demo.sh` | 启动 AlayaWorld 行走服务和 demo |
+| `scripts/make_alaya_case.py`, `test_alaya_server.py` | 键盘动作串转 AlayaWorld 用例；行走服务的客户端测试 |
+| `scripts/wait_gpus_and_run.sh`, `_rank_wrapper.sh`, `_queue_*.sh` | 等卡、多卡包装、排队 |
+| `docs/eval_results.md`, `spike_results.md` | 实验数字和结论 |
+| `reports/生成式开放世界游戏技术调研.md` | 最初的调研报告 |
+| `research_notes/` | 调研的六份原始笔记 |
+| `results_page/` | 结果网页的源文件和压缩视频 |
+| `logs/` | 运行日志，`sheet_*.jpg` 是各实验的抽帧拼图 |
+| `assets/starters/` | 起始图：MG2 自带的游戏风图和一张森林照片 |
+| `.env` | 运行配置。API key 通过文件路径引用，文件在 `~/Agentese/api_keys/` |
+| `~/.claude/plans/hidden-launching-grove.md` | 用户批准的 MVP 计划 |
+
+### Python 环境（都在项目目录下）
+
+| 环境 | 用途 |
+|---|---|
+| `.venv` | 主程序、MG2、Wan。py3.12，torch 2.11 |
+| `.venv_wp` | HY-WorldPlay。py3.10，torch 2.6 |
+| `.venv_wp2` | WorldPlay2。py3.10，torch 2.6，flash-attn 2.7.4 |
+| `.venv_alaya` | AlayaWorld。py3.10，torch 必须是 2.7.1+cu128，不能装 xformers |
+
+### 改过的第三方代码（`third_party/`，都标了 `[inception patch]`）
+
+- `HY-WorldPlay/hyvideo/generate.py`：加 `--prompt_schedule`；进程启动即占住 GPU。
+- `HY-WorldPlay/hyvideo/pipelines/worldplay_video_pipeline.py`：按块切换 prompt。
+- `AlayaWorld/alaya/inference/engine.py`：环境变量 `ALAYA_TEXT_DEVICE` 把 Gemma 放到第二张卡。
+- `AlayaWorld/configs/infer_pt.yaml`：新增的配置，PyTorch 注意力后端，DA3 放第二张卡。
+
+`third_party/` 不在 git 里。这些改动的 diff 和各上游仓库的 commit 存在 `third_party_patches/`，重新 clone 上游后 `git apply` 即可恢复。
+
+AlayaWorld 在 48 GB 卡上要加 `--compile none`，否则第 5 块编译失败后爆显存。
+
+### 模型权重和输出
+
+| 机器 | 路径 | 内容 | 大小 |
+|---|---|---|---|
+| vllab13 | `/ssd3/wjlyu/inception_models` | MG2、Wan2.2 TI2V-5B（`models/` 软链接到这里） | 52 GB |
+| vllab13 | `/ssd3/wjlyu/inception_sessions` | 所有局的状态、日志、录像；`spike/` 是实验视频，`eval/` 是评测片段（`sessions/` 软链接到这里） | 25 GB |
+| vllab13 | `/ssd3/wjlyu/worldplay2` | WorldPlay2-Fast 和 Wan2.2 I2V-A14B | 183 GB |
+| vllab13 | `/ssd3/wjlyu/alayaworld` | AlayaWorld、v1.1 LoRA、DA3、Gemma | 70 GB |
+| vllab13 | `/ssd4/wjlyu/hf_cache` | HY-WorldPlay 全套依赖，HF token | 190 GB |
+| vllab14 | `/ssd3/wjlyu/hf_cache` | HY-WorldPlay 全套，含非蒸馏 AR 权重 | 153 GB |
+| vllab14 | `/ssd3/wjlyu/worldplay2` | 同上 | 183 GB |
+| vllab14 | `/ssd3/wjlyu/alayaworld` | 同上 | 70 GB |
+| vllab14 | `/ssd3/wjlyu/inception_models/Wan-AI` | Wan2.2 TI2V-5B（demo 用） | 32 GB |
+| vllab14 | `/ssd3/wjlyu/inception_sessions` | vllab14 上 demo 的各局状态和录像 | 小 |
+| vllab14 | `/ssd3/wjlyu/inception_spike` | 在 vllab14 上跑出的实验视频 | 小 |
+| vllab10 | `/ssd1/wjlyu/alayaworld` | AlayaWorld 全套 | 70 GB |
+| vllab12 | `/ssd1/wjlyu/hf_cache` | HY-WorldPlay 全套 | 122 GB |
+| vllab12 | `/ssd1/wjlyu/worldplay2` | 同上 | 183 GB |
+
+vllab13 上的权重现在没用处了（不能在那里跑 GPU），可以删掉腾约 500 GB。转向新方向后，各机器上的 HY-WorldPlay 和 WorldPlay2 权重（合计约 800 GB）也可以删。
+
+HF token 的副本在 `vllab13:/ssd4/wjlyu/hf_cache/token`、`vllab14:/ssd3/wjlyu/hf_cache/token`、`vllab12:/ssd1/wjlyu/hf_cache/token`。这个账号已获得 FLUX.1-Redux-dev 和 Gemma-3 的访问权限。
+
+### 当前运行状态
+
+vllab14 上跑着 AlayaWorld 行走服务（18770，GPU 0、1）和 demo（7861，GPU 2）。vllab10、vllab12、vllab13 上没有这个项目的进程。
 
 ## 怎么把东西跑起来
 
@@ -191,7 +291,9 @@ cd ~/Inception && scripts/_queue_alaya.sh /ssd3/wjlyu/inception_spike/alaya2 pla
 
 ## 已知的坑
 
-- demo 的主线事件和玩家动作共用一条渲染队列，832×480 下每段约 45 秒，连着来会排队。
+- 玩家动作和主线事件共用一条 Wan 渲染队列，832×480 下每段约 45 秒，连着来会排队。玩家动作期间键盘一直锁着。
+- vllab14 的 GPU 是独占模式：服务一停，卡可能马上被别人占走；别人的进程刚启动时显存接近 0，按显存判断空闲会撞车（`wait_gpus_and_run.sh` 已同时检查有无进程）。
+- 在同一条 shell 命令里用 `pkill -f <模式>` 会把自己这条命令也杀掉，远程启动服务时尤其容易中招；用 pid 文件或 `scripts/restart_demo.sh`。
 - 行走进入近景（树丛、墙面）后画面会卡死在特写里，所有行走模型都有，没有做回避逻辑。
 - 视觉模型（OpenRouter 上的 gemini-2.5-flash）偶尔返回 schema 而不是内容，已加一次重试和降级。
 - `scripts/download_models.py` 里的仓库列表是早期的，已过时。
