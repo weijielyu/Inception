@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inception</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --fg:#e6e6e6; --dim:#8a919e; --acc:#5aa9ff; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
+  .wrap { display:grid; grid-template-columns: minmax(0, 1fr) 380px; gap:16px; padding:16px; max-width:1400px; margin:0 auto; }
+  canvas { width:100%; aspect-ratio: 640/352; background:#000; border-radius:8px; display:block; }
+  .panel { background:var(--panel); border-radius:8px; padding:12px; }
+  .hud { display:flex; gap:12px; align-items:center; margin:8px 0; color:var(--dim); }
+  .badge { padding:2px 8px; border-radius:999px; background:#2a2f3a; color:var(--fg); font-size:12px; }
+  .badge.ar { background:#1f4d2e; } .badge.clip { background:#4d3a1f; } .badge.locked { background:#5a1f1f; }
+  select { padding:9px; border-radius:6px; border:1px solid #333; background:#0b0d11; color:var(--fg); }
+  input[type=text] { width:100%; box-sizing:border-box; padding:10px; border-radius:6px; border:1px solid #333; background:#0b0d11; color:var(--fg); font-size:15px; }
+  button { padding:8px 14px; border-radius:6px; border:0; background:var(--acc); color:#000; font-weight:600; cursor:pointer; }
+  #narration { white-space:pre-wrap; min-height:80px; }
+  #log { font:12px/1.4 ui-monospace, monospace; color:var(--dim); max-height:300px; overflow:auto; white-space:pre-wrap; }
+  pre { font-size:11px; max-height:260px; overflow:auto; margin:0; }
+  h3 { margin:12px 0 6px; font-size:13px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em; }
+  #gallery img { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:4px; cursor:pointer; border:2px solid transparent; }
+  #gallery img.sel { border-color:var(--acc); }
+  #banner { display:none; position:absolute; left:12px; right:12px; top:12px; padding:10px 14px; background:rgba(0,0,0,.72); border-left:4px solid var(--acc); border-radius:6px; font-size:15px; }
+  .stage { position:relative; }
+  @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div>
+    <div class="stage"><canvas id="c" width="640" height="352" tabindex="0"></canvas><div id="banner"></div></div>
+    <div class="hud">
+      <span class="badge" id="mode">idle</span>
+      <span id="fps">0 fps</span>
+      <span style="margin-left:auto">WASD to move · ←→ or drag in the view to look · click the view first · text box: act / declare / ask</span>
+    </div>
+    <div class="panel">
+      <div id="gallery" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(96px,1fr)); gap:6px; margin-bottom:10px"></div>
+      <form id="startForm" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+        <span id="picked" style="color:var(--dim)">No starter picked</span>
+        <input type="file" id="image" accept="image/*">
+        <select id="tone" title="Tone"><option value="calm exploration">Calm exploration</option><option value="mystery">Mystery</option><option value="adventure">Adventure</option><option value="horror">Horror</option><option value="whimsical">Whimsical</option></select>
+        <input type="text" id="premise" placeholder="Optional: a premise for this world" style="flex:1; min-width:200px">
+        <button type="submit">Start world</button>
+      </form>
+    </div>
+    <div class="panel" style="margin-top:12px">
+      <form id="actForm" style="display:flex; gap:8px">
+        <input type="text" id="act" placeholder="Start a world first…" autocomplete="off" disabled>
+        <button type="submit">Do it</button>
+      </form>
+      <h3>Narration</h3>
+      <div id="narration">Pick a starter image (or upload one) and click Start world.</div>
+    </div>
+  </div>
+  <div class="panel">
+    <h3>World state</h3>
+    <pre id="state">{}</pre>
+    <h3>Agent log</h3>
+    <div id="log"></div>
+  </div>
+</div>
+<script>
+const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+const modeEl = document.getElementById('mode'), fpsEl = document.getElementById('fps');
+const narr = document.getElementById('narration'), logEl = document.getElementById('log'), stateEl = document.getElementById('state');
+let ws, keys = {w:false,a:false,s:false,d:false,dx:0,dy:0}, frames = 0, picked = null, dragging = false, lastX = 0, lastY = 0;
+const banner = document.getElementById('banner'), actInput = document.getElementById('act');
+function showBanner(text) { banner.textContent = text; banner.style.display = 'block'; clearTimeout(banner._t); banner._t = setTimeout(() => banner.style.display = 'none', 9000); }
+async function loadGallery() {
+  const names = await (await fetch('/starters')).json(); const g = document.getElementById('gallery');
+  names.forEach(n => { const im = document.createElement('img'); im.src = '/starters/' + n; im.title = n;
+    im.onclick = () => { picked = n; document.querySelectorAll('#gallery img').forEach(x => x.classList.remove('sel')); im.classList.add('sel'); document.getElementById('picked').textContent = n; document.getElementById('image').value = ''; };
+    g.appendChild(im); });
+}
+loadGallery();
+// mouse look: drag inside the canvas; arrow keys also turn
+canvas.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; canvas.focus(); });
+window.addEventListener('mouseup', () => { dragging = false; keys.dx = 0; keys.dy = 0; sendKeys(); });
+window.addEventListener('mousemove', e => { if (!dragging) return; keys.dx = (e.clientX - lastX) * 2; keys.dy = (e.clientY - lastY) * 2; lastX = e.clientX; lastY = e.clientY; sendKeys(); });
+
+function connect() {
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/stream');
+  ws.binaryType = 'blob';
+  ws.onmessage = async (ev) => {
+    if (ev.data instanceof Blob) {
+      const bmp = await createImageBitmap(ev.data);
+      ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height); frames++;
+    } else {
+      const m = JSON.parse(ev.data);
+      if (m.type === 'mode') { modeEl.textContent = m.mode + (m.keys_locked ? ' · locked' : ''); modeEl.className = 'badge ' + m.mode + (m.keys_locked ? ' locked' : ''); }
+      else if (m.type === 'narration') { actInput.disabled = false; if (actInput.placeholder.startsWith('World') || actInput.placeholder.startsWith('Start')) actInput.placeholder = 'I start digging / There is an elephant on the road'; const isPlot = (m.tag || '').startsWith('plot'); narr.textContent = (isPlot ? '[Event] ' : '') + m.text + (m.ruling && !isPlot ? `\n\n[${m.kind || ''} ${m.ruling}${m.roll != null ? ', d20=' + m.roll : ''}${m.success === false ? ', failed' : ''}] ${m.reason || ''}` : ''); addLog(isPlot ? 'event' : 'narration', m.text); if (isPlot) showBanner('[Event] ' + m.text); }
+      else if (m.type === 'status') { addLog('status', m.text); if (m.phase === 'rendering' || m.phase === 'playing') showBanner(m.text); }
+      else if (m.type === 'state') { stateEl.textContent = JSON.stringify(m.state, null, 1); }
+      else if (m.type === 'session') { if (!m.started) { narr.textContent = 'A world is being built on the server — the input unlocks when the opening narration arrives.'; } if (m.started) { narr.textContent = `Connected to world ${m.id} started ${m.age_min} min ago (keep playing, or pick an image and Start world for a new one)`; actInput.disabled = false; actInput.placeholder = 'I start digging / There is an elephant on the road'; addLog('session', m.id); } }
+    }
+  };
+  ws.onclose = () => setTimeout(connect, 1000);
+}
+function addLog(kind, text) { const d = document.createElement('div'); d.textContent = `[${new Date().toLocaleTimeString()}] ${kind}: ${text}`; logEl.prepend(d); }
+function sendKeys() { if (ws && ws.readyState === 1) ws.send(JSON.stringify({keys})); }
+setInterval(() => { fpsEl.textContent = frames + ' fps'; frames = 0; }, 1000);
+
+const map = {KeyW:'w', KeyA:'a', KeyS:'s', KeyD:'d', ArrowUp:'w', ArrowDown:'s'};
+const turn = {ArrowLeft:-40, ArrowRight:40};
+document.addEventListener('keydown', e => { if (document.activeElement.tagName === 'INPUT') return; if (turn[e.code] !== undefined) { e.preventDefault(); if (keys.dx !== turn[e.code]) { keys.dx = turn[e.code]; sendKeys(); } return; } const k = map[e.code]; if (k && !keys[k]) { keys[k] = true; sendKeys(); } });
+document.addEventListener('keyup', e => { if (turn[e.code] !== undefined) { keys.dx = 0; sendKeys(); return; } const k = map[e.code]; if (k && keys[k]) { keys[k] = false; sendKeys(); } });
+setInterval(sendKeys, 500); // heartbeat so a missed keyup can't stick
+
+document.getElementById('startForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const fd = new FormData(); const f = document.getElementById('image').files[0];
+  if (f) fd.append('image', f); else if (picked) fd.append('starter', picked); else { addLog('error', 'Pick a starter image or upload one first'); return; }
+  fd.append('premise', document.getElementById('premise').value); fd.append('tone', document.getElementById('tone').value);
+  narr.textContent = 'Building the world (describing the scene, writing the premise, scheduling the plot; first start loads models, ~1–2 min)…'; actInput.disabled = true; actInput.placeholder = 'World is being built…';
+  const r = await fetch('/start', {method:'POST', body: fd}); const j = await r.json();
+  if (!r.ok) { narr.textContent = 'Failed to start: ' + (j.error || r.status); addLog('error', j.error || r.status); return; }
+  narr.textContent = j.opening || JSON.stringify(j); actInput.disabled = false; actInput.placeholder = 'I start digging / There is an elephant on the road / Where am I?'; canvas.focus();
+};
+document.getElementById('actForm').onsubmit = async (e) => {
+  e.preventDefault(); const inp = document.getElementById('act'); const text = inp.value.trim(); if (!text) return;
+  inp.value = ''; addLog('you', text);
+  const r = await fetch('/act', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text})});
+  if (!r.ok) { const j = await r.json(); addLog('error', j.error || r.status); narr.textContent = (j.error || ('Error ' + r.status)); }
+  canvas.focus();
+};
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+HY-WorldPlay https://github.com/Tencent-Hunyuan/HY-WorldPlay.git 1588e1336e842b03b0a7860c654ebd7c46bb065e
+AlayaWorld https://github.com/AlayaLab/AlayaWorld.git 7e7dcfe5b82419d665ffdd458815553e459a8a39
+WorldPlay2 https://github.com/WorldPlay2/WorldPlay2.git c5d83e32099116ff3a1437a8a05c764d579f704b
+Matrix-Game https://github.com/SkyworkAI/Matrix-Game.git 756776d516233027631008761d4d40ddaea3e23a
+Depth-Anything-3 https://github.com/ByteDance-Seed/Depth-Anything-3.git 3d835ec1a5802d64a8b8b15f817a1ab54809bfe4
+LongLive https://github.com/NVlabs/LongLive.git e5fa48cc5b1f995637b987195d25b5bd16e26086
+YUME https://github.com/stdstu12/YUME.git 111c3fab7fb020d1e261a68be6ec78a3fecc8d5b

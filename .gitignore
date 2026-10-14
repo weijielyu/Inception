@@ -1,0 +1,12 @@
+.venv*/
+.venv_install.log
+models
+sessions
+third_party/
+__pycache__/
+*.pyc
+.env
+logs/*
+!logs/sheet_*.jpg
+!logs/exp/
+logs/exp/*.log

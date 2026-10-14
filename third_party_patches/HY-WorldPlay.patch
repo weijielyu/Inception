@@ -1,0 +1,90 @@
+diff --git a/hyvideo/generate.py b/hyvideo/generate.py
+index 402f27f..f3154bb 100644
+--- a/hyvideo/generate.py
++++ b/hyvideo/generate.py
+@@ -37,6 +37,7 @@ from hyvideo.generate_custom_trajectory import generate_camera_trajectory_local
+ 
+ parallel_dims = initialize_parallel_state(sp=int(os.environ.get("WORLD_SIZE", "1")))
+ torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", "0")))
++torch.ones(1, device="cuda")  # [inception patch] claim the GPU context immediately (Exclusive_Process hosts)
+ 
+ mapping = {
+     (0, 0, 0, 0): 0,
+@@ -56,6 +57,18 @@ def one_hot_to_one_dimension(one_hot):
+     return y
+ 
+ 
++def parse_prompt_schedule(spec):
++    """[inception patch] 'CHUNK:text||CHUNK:text' -> [(chunk, text), ...]"""
++    out = []
++    for item in (spec or "").split("||"):
++        item = item.strip()
++        if not item:
++            continue
++        chunk, text = item.split(":", 1)
++        out.append((int(chunk), text.strip()))
++    return out
++
++
+ def parse_pose_string(pose_string):
+     """
+     Parse pose string to motions list.
+@@ -766,6 +779,7 @@ def generate_video(args):
+         user_height=args.height,
+         user_width=args.width,
+         transformer_resident_ar_rollout=args.transformer_resident_ar_rollout,
++        prompt_schedule=parse_prompt_schedule(args.prompt_schedule),   # [inception patch]
+         **extra_kwargs,
+     )
+ 
+@@ -853,6 +867,9 @@ def main():
+         choices=["480p", "720p"],
+         help="Video resolution (480p or 720p)",
+     )
++    parser.add_argument(
++        "--prompt_schedule", type=str, default="",
++        help="[inception patch] per-chunk prompt switches: 'CHUNK:text||CHUNK:text' (chunk = index of 4-latent chunk)")
+     parser.add_argument(
+         "--model_path", type=str, required=True, help="Path to pretrained model"
+     )
+diff --git a/hyvideo/pipelines/worldplay_video_pipeline.py b/hyvideo/pipelines/worldplay_video_pipeline.py
+index 89a8ee9..da8d5be 100644
+--- a/hyvideo/pipelines/worldplay_video_pipeline.py
++++ b/hyvideo/pipelines/worldplay_video_pipeline.py
+@@ -1113,6 +1113,10 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
+         selected_frame_indices = []
+ 
+         for chunk_i in range(self.chunk_num):
++            _sched = getattr(self, "_prompt_schedule", None)
++            if _sched and chunk_i in _sched:   # [inception patch] prompt switch at chunk boundary
++                prompt_embeds, prompt_mask, extra_kwargs = _sched[chunk_i]
++                print(f"[prompt_schedule] chunk {chunk_i}: switched prompt", flush=True)
+             if chunk_i > 0:
+                 current_frame_idx = (
+                     chunk_i * self.chunk_latent_frames
+@@ -1799,6 +1803,25 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
+                 prompt_embeds_2 = torch.cat([negative_prompt_embeds_2, prompt_embeds_2])
+             if prompt_mask_2 is not None:
+                 prompt_mask_2 = torch.cat([negative_prompt_mask_2, prompt_mask_2])
++        # [inception patch] per-chunk prompt schedule: kwargs["prompt_schedule"] = [(chunk_start, text), ...]
++        # Each scheduled prompt is encoded exactly like the main prompt; the AR loop swaps it in at that
++        # chunk. Because the AR loop rebuilds the context KV cache every chunk from past frames, the
++        # switch is automatically "recached" under the new text.
++        self._prompt_schedule = {}
++        for sched_chunk, sched_text in (kwargs.get("prompt_schedule") or []):
++            with auto_offload_model(self.text_encoder, self.execution_device, enabled=self.enable_offloading):
++                s_pe, s_npe, s_pm, s_npm = self.encode_prompt(
++                    sched_text, device, num_videos_per_prompt, self.do_classifier_free_guidance,
++                    negative_prompt, clip_skip=self.clip_skip, data_type="video")
++            s_extra = {}
++            if self.config.glyph_byT5_v2:
++                with auto_offload_model(self.byt5_model, self.execution_device, enabled=self.enable_offloading):
++                    s_extra = self._prepare_byt5_embeddings(sched_text, device)
++            if self.do_classifier_free_guidance:
++                s_pe = torch.cat([s_npe, s_pe])
++                if s_pm is not None:
++                    s_pm = torch.cat([s_npm, s_pm])
++            self._prompt_schedule[int(sched_chunk)] = (s_pe, s_pm, s_extra)
+ 
+         extra_set_timesteps_kwargs = self.prepare_extra_func_kwargs(
+             self.scheduler.set_timesteps, {"n_tokens": n_tokens}

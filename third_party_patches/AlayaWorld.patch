@@ -1,0 +1,13 @@
+diff --git a/alaya/inference/engine.py b/alaya/inference/engine.py
+index aecac8c..d3b1ef5 100644
+--- a/alaya/inference/engine.py
++++ b/alaya/inference/engine.py
+@@ -152,7 +152,7 @@ class InferenceEngine:
+ 
+         with phase("Gemma text encoder"):
+             self.text_encoder, self.encode_text = L.load_text_encoder(
+-                ckpt, cfg.paths.gemma, device=self.device, dtype=self.dtype, state_dict=merged_state
++                ckpt, cfg.paths.gemma, device=__import__('os').environ.get('ALAYA_TEXT_DEVICE', self.device), dtype=self.dtype, state_dict=merged_state  # [inception patch] Gemma on a 2nd GPU (48 GB cards)
+             )
+ 
+         # history encoder weights are folded into the merged one-file checkpoint
