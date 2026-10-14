@@ -22,7 +22,7 @@ from .agents.writer import WriterAgent
 from .config import settings
 from .llm import LLM, VLM
 from .renderers.base import ARWalkRenderer, ClipRenderer, Keys
-from .state import Entity, Session
+from .state import Commitment, Entity, Session
 
 log = logging.getLogger("inception.game")
 
@@ -149,29 +149,47 @@ class Game:
             t0 = time.time()
             if not plot:
                 self.display.last_input_t = time.time()
-            self.display.lock_keys(True)
-            self.display.event({"type": "status", "text": "…" if plot else f"You try: {text}", "tag": tag})
+            # Player actions lock the keys until their clip has played. Plot beats never lock: the player
+            # keeps walking, and a beat rendered for a view the player has since left is dropped.
+            if not plot:
+                self.display.lock_keys(True)
+                self.display.event({"type": "status", "text": f"You try: {text}", "tag": tag})
+            v0 = self.display.version
             try:
                 view = self._caption_view(self.display.current_frame, self.display.version)
                 res = self.gm.run(text, plot_event=plot, current_view=view)
                 success, roll = self.gm.roll(res, n)
                 branch = res.success if success else res.failure
                 t_llm = time.time() - t0
-                notes = self.memory.commit(branch.delta)
-                self.memory.record_turn(text, branch.visible_result, branch.narration)
-                self.display.event({"type": "narration", "text": branch.narration, "tag": tag, "kind": res.kind,
-                                    "ruling": res.ruling, "success": success, "roll": roll, "reason": res.reason})
-                self._push_state()
+                narr = {"type": "narration", "text": branch.narration, "tag": tag, "kind": res.kind,
+                        "ruling": res.ruling, "success": success, "roll": roll, "reason": res.reason}
+                notes: list[str] = []
+                if not plot:
+                    notes = self.memory.commit(branch.delta)
+                    self.memory.record_turn(text, branch.visible_result, branch.narration)
+                    self.display.event(narr)
+                    self._push_state()
                 if res.kind == "question":          # answered in words; the world keeps playing
                     self.display.lock_keys(False)
                     self.session.log("game", "action_done", tag=tag, text=text, kind="question", t_llm=round(t_llm, 1))
                     return
                 start_frame = self.display.current_frame
-                self.display.event({"type": "status", "text": f"Rendering (~{int(settings.clip_seconds * 11)} s): {branch.visible_result[:70]}", "tag": tag, "phase": "rendering"})
+                v0 = self.display.version
+                if not plot:
+                    self.display.event({"type": "status", "text": f"Rendering (~{int(settings.clip_seconds * 11)} s): {branch.visible_result[:70]}", "tag": tag, "phase": "rendering"})
                 t1 = time.time()
                 with self.clip_lock:
                     frames = self.clip.render(start_frame, branch.clip_prompt, settings.clip_seconds, seed=n)
                 t_clip = time.time() - t1
+                if plot:
+                    if self.display.version != v0 or self.display.mode != "idle":   # the player moved on: retry later
+                        self.session.log("game", "plot_dropped_moved", tag=tag, text=text)
+                        self.memory.add_commitments([Commitment(trigger_seconds=self.session.state.elapsed() + 45, event=text)])
+                        return
+                    notes = self.memory.commit(branch.delta)
+                    self.memory.record_turn(text, branch.visible_result, branch.narration)
+                    self.display.event(narr)
+                    self._push_state()
                 self.display.event({"type": "status", "text": f"▶ Now playing: {text[:70]}", "tag": tag, "phase": "playing"})
                 self.audit.submit(start_frame, frames, branch.expected_visible, tag)
                 self.display.enqueue_clip(frames, tag=tag, source="plot" if plot else "clip")
@@ -236,6 +254,8 @@ class Game:
             return
         # nobody watching, or nobody has touched keys/text for a while -> the world waits
         if not self.display.subs or time.time() - self.display.last_input_t > settings.plot_idle_pause_s:
+            return
+        if self.display.mode != "idle" or self.display.keys.any:    # never start a beat mid-walk
             return
         due = self.memory.due_commitments()
         now = self.session.state.elapsed()
