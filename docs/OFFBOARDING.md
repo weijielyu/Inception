@@ -6,9 +6,11 @@
 
 **结论（10-14，用户已认可）：用视频模型逐帧生成行走这条路，在现有开源模型和 48 GB 卡上走到头了。** 实时的 Matrix-Game 2.0 画面会崩；不崩的 AlayaWorld、WorldPlay 系列比实时慢 4–10 倍。下一步转向"代码生成布局 + 视频模型只做重绘"，行走交给引擎实时渲染。这个新方向还没有任何代码。
 
-Demo 跑在 **vllab14** 上，行走渲染器是 AlayaWorld：`ssh -N -L 7861:127.0.0.1:7861 wjlyu@169.236.184.113` 后打开 http://localhost:7861 。它能走、画面不崩，但走走停停：实测按住 W 40 秒，约 11 秒在动。占 3 张卡：GPU 0、1 是 AlayaWorld 行走服务（端口 18770），GPU 2 是 Wan 片段。
+Demo **已停止**（10-14，卡已还回）。最后部署在 vllab14：AlayaWorld 行走 + Wan 片段，占 3 张卡。它能走、画面不崩，但走走停停：实测按住 W 40 秒，约 11 秒在动。
 
-重启方法（在 vllab14 上）：`scripts/run_alaya_server.sh 0,1 18770`（约 40 秒加载），然后 `scripts/restart_demo.sh 2 7861`。新方向不需要这套服务时可以直接停掉，把卡还回去。
+重新启动（在 vllab14 上，需要 3 张空卡）：`scripts/run_alaya_server.sh <卡A>,<卡B> 18770`（约 40 秒加载），然后 `scripts/restart_demo.sh <卡C> 7861`；本地用 `ssh -N -L 7861:127.0.0.1:7861 wjlyu@169.236.184.113` 转发后打开 http://localhost:7861 。
+
+新方向用户说先不开始，等通知。
 
 带视频的结果页：https://claude.ai/artifact/DHzor4KxU81BVjw2V8sfqv （私有，只有 wjlyu 能打开；源文件在 `results_page/`，不含 10-14 的 AlayaWorld 结果）
 
@@ -175,7 +177,7 @@ HF token 的副本在 `vllab13:/ssd4/wjlyu/hf_cache/token`、`vllab14:/ssd3/wjly
 
 ### 当前运行状态
 
-vllab14 上跑着 AlayaWorld 行走服务（18770，GPU 0、1）和 demo（7861，GPU 2）。vllab10、vllab12、vllab13 上没有这个项目的进程。
+所有机器上都没有这个项目的进程在跑，没有占用任何 GPU（10-14 停止）。
 
 ## 怎么把东西跑起来
 
@@ -186,7 +188,7 @@ cd ~/Inception
 AR_RENDERER=mock CLIP_RENDERER=mock .venv/bin/python -m inception.web.server --port 7862
 ```
 
-真实渲染器（AlayaWorld 行走 + Wan 片段），需要 3 张空卡，目前部署在 vllab14：
+真实渲染器（AlayaWorld 行走 + Wan 片段），需要 3 张空卡，最后部署在 vllab14：
 
 ```bash
 cd ~/Inception
