@@ -11,3 +11,16 @@ index aecac8c..d3b1ef5 100644
              )
  
          # history encoder weights are folded into the merged one-file checkpoint
+diff --git a/inference/run.py b/inference/run.py
+index 9c1f006..48f17a0 100644
+--- a/inference/run.py
++++ b/inference/run.py
+@@ -172,7 +172,7 @@ def main(args: argparse.Namespace | None = None) -> None:
+     check_input_resolution(video_pixels, cfg)
+ 
+     engine = build_engine(
+-        cfg, compile_mode=args.compile, compile_aux=False, bank_taehv=False, verbose=is_rank0
++        cfg, compile_mode=args.compile, compile_aux=False, bank_taehv=__import__('os').environ.get('ALAYA_BANK_TAEHV') == '1', verbose=is_rank0  # [inception patch]
+     )
+ 
+     # DA3 has now been loaded by the engine, so depth_anything_3 is importable.

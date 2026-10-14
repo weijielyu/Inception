@@ -37,7 +37,7 @@ Demo 能端到端跑通（上传图 → WASD 行走 → 打字做事 → 画面�
 | Wan2.2 5B 逐段接龙 | 1 | 4.8 秒 / 2 秒段 | 约 40 秒 | 约 6 秒后偏色，12 秒后崩。步数加到 20 崩得更快 |
 | HY-WorldPlay 1.5（蒸馏 AR） | 4 | 2.3 fps | 约 2 分钟 | 真实照片 10 秒稳定。文字完全无效，换非蒸馏模型开 CFG 也无效 |
 | WorldPlay2-Fast | 4 | 1.2 fps | 约 10 分钟 | 稳定。"鹿走到路上"有效，"下雨"只变暗 |
-| AlayaWorld v1.0 | 2 | 约 3.3 fps，第 5–8 块掉到约 1.1 fps | 约 1 分钟 | 官方示例 16 秒稳定，结尾"火鸟"事件清楚出现 |
+| AlayaWorld v1.0 | 2 | 960×544：约 1.1–3.3 fps；640×352：约 3.7 fps | 约 1 分钟 | 官方示例和自有森林照片 16 秒都稳定。"火鸟"清楚出现；"鹿"要用强一点的 prompt 才出现，且又小又远 |
 
 没跑成的：Matrix-Game 3.0（权重下过，推理代码未开源，本机权重已删）；LongLive 2.0（公开权重只有文生视频，没有图生视频）；Yume（只看了代码，没跑）。
 
@@ -66,7 +66,7 @@ v2 规则已写进 GM 的系统 prompt，832×480 已通过 `.env` 的 `CLIP_REN
 
 ## 没做的事
 
-- **AlayaWorld 的三项验证**：自有照片、键盘驱动的相机轨迹（它吃的是 `camera.pt` 相机外参序列，需要写 WASD → 外参的转换）、第 5–8 块为什么慢三倍。
+- **AlayaWorld 的长时间稳定性**：自有照片、键盘动作转相机轨迹（`scripts/make_alaya_case.py`）、慢块原因三项已在 10-14 验证，见 `docs/eval_results.md` 末尾。还没跑的是 32 秒以上的 rollout（`forest_long` 用例已建好，排在 vllab10 上等卡）。
 - **AlayaWorld 接进 demo**：需要包成常驻的 `start(frame)` / `step(keys)` 服务。它的 `reactor/alayaworld.py` 是现成的参考实现。
 - **WorldPlay2 常驻服务**：同上，参考 `third_party/WorldPlay2/reactor/`。需要 4 张卡。
 - **代码生成布局 + 视频模型重绘**（用户 10-13 提出）：coding agent 写 three.js 场景承载几何和状态，引擎负责实时交互，视频模型只把粗渲染重绘成照片级。只讨论过，没有任何代码。建议的最小实验见下。
@@ -85,7 +85,7 @@ v2 规则已写进 GM 的系统 prompt，832×480 已通过 `.env` 的 `CLIP_REN
 ## 机器和约束
 
 - **不要在 vllab13 上跑 GPU 任务或 demo**（用户 10-13 明确要求，别人要用）。代码和这个会话都在 vllab13 上，CPU 工作可以。
-- 可用：vllab9（`vllab9.ucmerced.edu`，169.236.184.236）、vllab12（.110）、vllab14（.113）、vllab15（.111）。**不要用 vllab10、vllab11**。
+- 可用：vllab9（`vllab9.ucmerced.edu`，169.236.184.236）、vllab10（`vllab10.ucmerced.edu`，169.236.184.153，10-14 起用户允许）、vllab12（.110）、vllab14（.113）、vllab15（.111）。**不要用 vllab11**。
 - 短主机名不解析，用 IP。home 是 NFS 共享的，各机器路径相同。
 - vllab14 的 GPU 是 Exclusive_Process 模式，多卡任务要用 `scripts/_rank_wrapper.sh` 让每个 rank 只看到一张卡。
 - 这些机器经常被占满。`scripts/wait_gpus_and_run.sh` 会等到有 N 张真正空闲的卡再启动，失败自动重试。

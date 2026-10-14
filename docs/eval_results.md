@@ -68,3 +68,17 @@ Patched `_ar_rollout_inner` to swap the text embeddings at a scheduled chunk (`-
 - Setup fixes: torch pinned to 2.7.1+cu128, xformers removed, extra deps (easydict, addict, av, DA3 deps); Gemma text encoder moved to a 2nd GPU (`ALAYA_TEXT_DEVICE=cuda:1`, patch in `alaya/inference/engine.py`) and `spatial_memory.da3_device: cuda:1` + `attention_type: pytorch` in `configs/infer_pt.yaml`; `--compile none` (reduce-overhead compile dies at chunk 5 on Ada: triton "out of resource: shared memory", eager fallback then OOMs).
 - Result: 12 chunks = 384 frames, 960×544, 16 s (`logs/sheet_alaya_case1.jpg`, `/ssd3/wjlyu/inception_sessions/spike/alaya_case1.mp4`). Camera walks forward and pans right along the Acropolis terrace with stable geometry and lighting; the end "skill" prompt (a bird of fire descends) **renders clearly in the last ~4 s** → mid-rollout text events work, including a new entity + effect.
 - Speed without compile: 9.3–10 s per 32-frame chunk for chunks 1–4 and 9 (≈3.3 fps), 29 s for chunks 5–8, 6.9 s for the 3 skill chunks; load ≈ 60 s; main GPU peak 26–32 GB. With compile, chunks 2–4 were 8.3 s.
+
+## AlayaWorld follow-ups (2026-10-14, vllab14, 2× RTX 6000 Ada, `--compile none`)
+Own photo + keyboard-style actions, via `scripts/make_alaya_case.py` (action string → `camera.pt` using AlayaWorld's own planner and motion rates; positive yaw = turn right).
+
+| run | result |
+|---|---|
+| forest photo, `w-5, w+right-3, w-4`, 960×544 (`logs/sheet_alaya_forest.jpg`) | 16 s, stable and photoreal through the turn. End prompt "a deer walks out of the trees" while turning: **no deer** |
+| forest photo, `w-8`, stronger end prompt "a deer suddenly leaps onto the path directly ahead, very close" (`logs/sheet_alaya_deer2.jpg`) | **deer appears** on the path in the last ~2 s, small and far away |
+| same as first at **640×352** (`logs/sheet_alaya_forest_352.jpg`) | same stability; 7.1 s per 32-frame chunk with spatial memory, 3.7 s without (+1.6 s finalize) |
+
+Slow chunks explained: at 960×544 chunks with the spatial-memory wrap take ~28 s vs 6.5–9.5 s without, and the main GPU sits at 48.1 GB (full) during them. At 640×352 the same chunks take 7.1 s, so the 544p slowdown is mostly memory saturation on a 48 GB card on top of a ~2× real cost of the wrap. Not fixed by: tiny bank decoder (`ALAYA_BANK_TAEHV=1`, still 28 s), `--no-flex-attn` (28–29 s). `--compile default` and `reduce-overhead` both die on Ada with triton "out of resource: shared memory".
+
+Practical setting for our cards: 640×352, `--compile none` → ≈ 8.7 s wall per 1.33 s of video (≈ 3.7 fps generated) on 2 GPUs.
+Not run: 32 s rollout on vllab10 (`forest_long`, queued; vllab10 had no free GPU).
